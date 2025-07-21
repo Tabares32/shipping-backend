@@ -8,7 +8,7 @@ app = Flask(__name__)
 CORS(app)
 
 # Configura tu URL de PostgreSQL desde Render aquí
-app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get("DATABASE_URL", "sqlite:///local.db")
+app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get("DATABASE_URL", "postgresql://shipping_db_nktl_user:tqrEny3WooYT1o3Gd2iaCx8lNCSYe4KE@dpg-d1v9l349c44c73dmcb3g-a/shipping_db_nktl")
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 db = SQLAlchemy(app)
@@ -76,4 +76,5 @@ def add_line():
     return jsonify({"message": "Línea añadida"})
 
 if __name__ == "__main__":
-    app.run(debug=True)
+    port = int(os.environ.get("PORT", 5432))
+    app.run(host="0.0.0.0", port=port)
