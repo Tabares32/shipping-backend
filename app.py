@@ -32,9 +32,11 @@ class Line(db.Model):
     part_number = db.Column(db.String(100))
     quantity = db.Column(db.Integer)
 
-@app.before_first_request
-def create_tables():
-    db.create_all()
+@app.before_request
+def create_tables_once():
+    if not hasattr(app, 'has_created_tables'):
+        db.create_all()
+        app.has_created_tables = True
 
 @app.route("/api/test")
 def test():
