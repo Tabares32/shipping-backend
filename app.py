@@ -8,17 +8,26 @@ from flask_cors import CORS
 from flask_sqlalchemy import SQLAlchemy
 from werkzeug.security import generate_password_hash, check_password_hash
 
-# -----------------------------------------------------------------------------
+# -------------------------------------------------------------------------
 # Configuración base
-# -----------------------------------------------------------------------------
+# -------------------------------------------------------------------------
 app = Flask(__name__)
 
-# CORS: permite tu frontend (ajusta FRONTEND_ORIGIN en Render)
-FRONTEND_ORIGIN = os.environ.get("FRONTEND_ORIGIN", "*")
-CORS(app, resources={r"/api/*": {"origins": FRONTEND_ORIGIN}})
+# CORS: solo permite el origen configurado en Render
+FRONTEND_ORIGIN = os.environ.get("FRONTEND_ORIGIN")
+if FRONTEND_ORIGIN:
+    # Solo permite tu frontend en producción
+    CORS(app, resources={r"/api/*": {"origins": FRONTEND_ORIGIN}})
+else:
+    # Si no está configurado, permite todo (útil para desarrollo local)
+    CORS(app, resources={r"/api/*": {"origins": "*"}})
 
-# DATABASE_URL (Render) — corrige esquema postgres:// -> postgresql://
+# -------------------------------------------------------------------------
+# Configuración de base de datos
+# -------------------------------------------------------------------------
 db_url = os.environ.get("DATABASE_URL", "sqlite:///local.db")
+
+# Render a veces da postgres:// pero SQLAlchemy espera postgresql://
 if db_url.startswith("postgres://"):
     db_url = db_url.replace("postgres://", "postgresql://", 1)
 
