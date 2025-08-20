@@ -16,11 +16,9 @@ app = Flask(__name__)
 # CORS: solo permite el origen configurado en Render
 FRONTEND_ORIGIN = os.environ.get("FRONTEND_ORIGIN")
 if FRONTEND_ORIGIN:
-    # Solo permite tu frontend en producción
-    CORS(app, resources={r"/api/*": {"origins": FRONTEND_ORIGIN}})
+    CORS(app, origins=[FRONTEND_ORIGIN])  # aplica a todas las rutas
 else:
-    # Si no está configurado, permite todo (útil para desarrollo local)
-    CORS(app, resources={r"/api/*": {"origins": "*"}})
+    CORS(app)  # permite todo en local
 
 # -------------------------------------------------------------------------
 # Configuración de base de datos
