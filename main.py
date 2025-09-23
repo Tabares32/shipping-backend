@@ -7,6 +7,10 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
 app = FastAPI(title="Shipping Backend")
 
+@app.get("/api/health")
+def health():
+    return {"status": "ok"}
+
 # CORS - allow all origins (in production restrict this)
 app.add_middleware(
     CORSMiddleware,
