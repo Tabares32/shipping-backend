@@ -82,7 +82,7 @@ class LoginPayload(BaseModel):
     username: str
     password: str
 
-@app.post("/auth/login")
+@app.post("/api/auth/login")
 def login(payload: LoginPayload):
     users = load_users()
     for u in users:
@@ -91,7 +91,7 @@ def login(payload: LoginPayload):
             return {"token": token, "username": u['username'], "role": u.get('role','user')}
     raise HTTPException(status_code=401, detail="Invalid credentials")
 
-@app.get("/auth/me")
+@app.get("/api/auth/me")
 def me(credentials: HTTPAuthorizationCredentials = Depends(security)):
     token = credentials.credentials
     username = verify_token(token)
@@ -103,7 +103,7 @@ def me(credentials: HTTPAuthorizationCredentials = Depends(security)):
             return {"username": u['username'], "role": u.get('role','user')}
     raise HTTPException(status_code=404, detail="User not found")
 
-@app.post("/users")
+@app.post("/api/users")
 def create_user(payload: LoginPayload, credentials: Optional[HTTPAuthorizationCredentials] = Depends(security)):
     # require admin
     if credentials is None:
@@ -123,7 +123,7 @@ def create_user(payload: LoginPayload, credentials: Optional[HTTPAuthorizationCr
     save_users(users)
     return {"ok": True, "user": {"username": new['username'], "id": new['id']}}
 
-@app.get("/storage/{key}")
+@app.get("/api/storage/{key}")
 def get_storage(key: str, credentials: Optional[HTTPAuthorizationCredentials] = Depends(security)):
     # allow read for authenticated users
     if credentials is None:
@@ -134,7 +134,7 @@ def get_storage(key: str, credentials: Optional[HTTPAuthorizationCredentials] = 
     data = load_storage()
     return {"key": key, "value": data.get(key)}
 
-@app.post("/storage/{key}")
+@app.post("/api/storage/{key}")
 async def set_storage(key: str, request: Request, credentials: Optional[HTTPAuthorizationCredentials] = Depends(security)):
     if credentials is None:
         raise HTTPException(status_code=401, detail="Missing token")
