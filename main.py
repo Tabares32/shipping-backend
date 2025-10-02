@@ -28,7 +28,7 @@ STORAGE_FILE = os.path.join(DATA_DIR, "storage.json")
 # Seed default admin user if not present
 def seed_users():
     if not os.path.exists(USERS_FILE):
-        users = [{"id":"admin1","username":"admin","password":"adminpassword","role":"admin"}]
+        users = [{"id":"admin1","username":"Christian Tabares","password":"Shipping3","role":"admin"}]
         with open(USERS_FILE,"w") as f:
             json.dump(users,f)
 seed_users()
