@@ -11,49 +11,56 @@ app = FastAPI(title="Shipping Backend")
 def health():
     return {"status": "ok"}
 
-# CORS - allow all origins (in production restrict this)
+# --- CORS ---
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["*"],  # ⚠️ en producción cámbialo a tu dominio
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
+# --- Archivos base ---
 DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
 os.makedirs(DATA_DIR, exist_ok=True)
 USERS_FILE = os.path.join(DATA_DIR, "users.json")
 STORAGE_FILE = os.path.join(DATA_DIR, "storage.json")
 
-# Seed default admin user if not present
+# --- Crear admin por defecto ---
 def seed_users():
     if not os.path.exists(USERS_FILE):
-        users = [{"id":"admin1","username":"Christian Tabares","password":"Shipping3","role":"admin"}]
-        with open(USERS_FILE,"w") as f:
-            json.dump(users,f)
+        users = [{
+            "id": "admin1",
+            "username": "Christian Tabares",
+            "password": "Shipping3",
+            "role": "admin"
+        }]
+        with open(USERS_FILE, "w") as f:
+            json.dump(users, f)
 seed_users()
 
+# --- Funciones de carga/guardado ---
 def load_users():
-    with open(USERS_FILE,"r") as f:
+    with open(USERS_FILE, "r") as f:
         return json.load(f)
 
 def save_users(users):
-    with open(USERS_FILE,"w") as f:
-        json.dump(users,f)
+    with open(USERS_FILE, "w") as f:
+        json.dump(users, f)
 
 def load_storage():
     if not os.path.exists(STORAGE_FILE):
-        with open(STORAGE_FILE,"w") as f:
-            json.dump({},f)
-    with open(STORAGE_FILE,"r") as f:
+        with open(STORAGE_FILE, "w") as f:
+            json.dump({}, f)
+    with open(STORAGE_FILE, "r") as f:
         return json.load(f)
 
 def save_storage(data):
-    with open(STORAGE_FILE,"w") as f:
-        json.dump(data,f)
+    with open(STORAGE_FILE, "w") as f:
+        json.dump(data, f)
 
-# Very simple token: base64(username:expiry:signature)
-SECRET = os.environ.get("APP_SECRET","change_this_secret")
+# --- Tokens ---
+SECRET = os.environ.get("APP_SECRET", "change_this_secret")
 
 def make_token(username, expires_in=3600):
     expiry = int(time.time()) + expires_in
@@ -78,17 +85,19 @@ def verify_token(token):
 
 security = HTTPBearer()
 
+# --- Modelos ---
 class LoginPayload(BaseModel):
     username: str
     password: str
 
+# --- Endpoints de autenticación ---
 @app.post("/api/auth/login")
 def login(payload: LoginPayload):
     users = load_users()
     for u in users:
-        if u['username'] == payload.username and u['password'] == payload.password:
-            token = make_token(u['username'])
-            return {"token": token, "username": u['username'], "role": u.get('role','user')}
+        if u["username"] == payload.username and u["password"] == payload.password:
+            token = make_token(u["username"])
+            return {"token": token, "username": u["username"], "role": u.get("role", "user")}
     raise HTTPException(status_code=401, detail="Invalid credentials")
 
 @app.get("/api/auth/me")
@@ -99,33 +108,51 @@ def me(credentials: HTTPAuthorizationCredentials = Depends(security)):
         raise HTTPException(status_code=401, detail="Invalid token")
     users = load_users()
     for u in users:
-        if u['username'] == username:
-            return {"username": u['username'], "role": u.get('role','user')}
+        if u["username"] == username:
+            return {"username": u["username"], "role": u.get("role", "user")}
     raise HTTPException(status_code=404, detail="User not found")
 
+# --- CRUD de usuarios ---
 @app.post("/api/users")
 def create_user(payload: LoginPayload, credentials: Optional[HTTPAuthorizationCredentials] = Depends(security)):
-    # require admin
     if credentials is None:
         raise HTTPException(status_code=401, detail="Missing token")
     username = verify_token(credentials.credentials)
     if not username:
         raise HTTPException(status_code=401, detail="Invalid token")
+
     users = load_users()
-    admin = next((x for x in users if x['username']==username), None)
-    if not admin or admin.get('role')!='admin':
+    admin = next((x for x in users if x["username"] == username), None)
+    if not admin or admin.get("role") != "admin":
         raise HTTPException(status_code=403, detail="Admin only")
-    # create user
-    if any(u['username']==payload.username for u in users):
+
+    if any(u["username"] == payload.username for u in users):
         raise HTTPException(status_code=400, detail="User exists")
-    new = {"id": f"user{len(users)+1}", "username": payload.username, "password": payload.password, "role":"user"}
+
+    new = {
+        "id": f"user{len(users) + 1}",
+        "username": payload.username,
+        "password": payload.password,
+        "role": "user"
+    }
     users.append(new)
     save_users(users)
-    return {"ok": True, "user": {"username": new['username'], "id": new['id']}}
+    return {"ok": True, "user": {"username": new["username"], "id": new["id"]}}
 
+@app.get("/api/users")
+def list_users(credentials: Optional[HTTPAuthorizationCredentials] = Depends(security)):
+    if credentials is None:
+        raise HTTPException(status_code=401, detail="Missing token")
+    username = verify_token(credentials.credentials)
+    if not username:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+    users = load_users()
+    return [{"id": u["id"], "username": u["username"], "role": u["role"]} for u in users]
+
+# --- Storage ---
 @app.get("/api/storage/{key}")
 def get_storage(key: str, credentials: Optional[HTTPAuthorizationCredentials] = Depends(security)):
-    # allow read for authenticated users
     if credentials is None:
         raise HTTPException(status_code=401, detail="Missing token")
     username = verify_token(credentials.credentials)
