@@ -49,15 +49,39 @@ def save_users(users):
         json.dump(users, f)
 
 def load_storage():
-    if not os.path.exists(STORAGE_FILE):
-        with open(STORAGE_FILE, "w") as f:
-            json.dump({}, f)
-    with open(STORAGE_FILE, "r") as f:
-        return json.load(f)
+    try:
+        if not os.path.exists(STORAGE_FILE):
+            with open(STORAGE_FILE, "w") as f:
+                json.dump({}, f)
+        with open(STORAGE_FILE, "r") as f:
+            return json.load(f)
+    except Exception as e:
+        print("⚠️ Error leyendo storage.json:", e)
+        return {}
 
 def save_storage(data):
-    with open(STORAGE_FILE, "w") as f:
-        json.dump(data, f)
+    try:
+        with open(STORAGE_FILE, "w") as f:
+            json.dump(data, f, indent=2)
+    except Exception as e:
+        print("⚠️ Error guardando storage.json:", e)
+def load_storage():
+    try:
+        if not os.path.exists(STORAGE_FILE):
+            with open(STORAGE_FILE, "w") as f:
+                json.dump({}, f)
+        with open(STORAGE_FILE, "r") as f:
+            return json.load(f)
+    except Exception as e:
+        print("⚠️ Error leyendo storage.json:", e)
+        return {}
+
+def save_storage(data):
+    try:
+        with open(STORAGE_FILE, "w") as f:
+            json.dump(data, f, indent=2)
+    except Exception as e:
+        print("⚠️ Error guardando storage.json:", e)
 
 # --- Tokens ---
 SECRET = os.environ.get("APP_SECRET", "change_this_secret")
