@@ -15,20 +15,19 @@ def health():
 # --- CORS ---
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # ⚠️ cambia en producción a tu dominio exacto
+    allow_origins=["*"],  # ⚠️ En producción cambia esto a tu dominio
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# --- Rutas de datos ---
+# --- Directorios y archivos ---
 DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
 os.makedirs(DATA_DIR, exist_ok=True)
 
 USERS_FILE = os.path.join(DATA_DIR, "users.json")
 STORAGE_FILE = os.path.join(DATA_DIR, "storage.json")
 
-# Archivos por módulo
 FILES = {
     "users": "users.json",
     "fedexOrders": "fedex_orders.json",
@@ -41,7 +40,7 @@ FILES = {
     "invoiceSearch": "invoice_search.json",
     "invoiceHistory": "invoice_history.json",
     "cutsReport": "cuts_report.json",
-    "dailyReport": "daily_report.json"
+    "dailyReport": "daily_report.json",
 }
 
 # Crear archivos vacíos si no existen
@@ -99,7 +98,7 @@ def seed_users():
             json.dump(users, f)
 seed_users()
 
-# --- Tokens ---
+# --- Token helpers ---
 SECRET = os.environ.get("APP_SECRET", "change_this_secret")
 
 def make_token(username, expires_in=3600):
@@ -153,8 +152,23 @@ def me(credentials: HTTPAuthorizationCredentials = Depends(security)):
     raise HTTPException(status_code=404, detail="User not found")
 
 # --- CRUD Usuarios ---
+@app.get("/api/users")
+def list_users(credentials: Optional[HTTPAuthorizationCredentials] = Depends(security)):
+    """Lista todos los usuarios (solo para administradores)."""
+    username = verify_token(credentials.credentials)
+    if not username:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+    users = load_users()
+    current_user = next((x for x in users if x["username"] == username), None)
+    if not current_user or current_user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin only")
+
+    return users
+
 @app.post("/api/users")
 def create_user(payload: LoginPayload, credentials: Optional[HTTPAuthorizationCredentials] = Depends(security)):
+    """Crea un nuevo usuario."""
     if credentials is None:
         raise HTTPException(status_code=401, detail="Missing token")
     username = verify_token(credentials.credentials)
@@ -198,20 +212,16 @@ async def set_storage(key: str, request: Request, credentials: Optional[HTTPAuth
     save_storage(data)
     return {"ok": True}
 
-# --- NUEVOS: Sincronización global ---
+# --- Sincronización global ---
 @app.get("/api/sync/data")
-def get_all_data(credentials: Optional[HTTPAuthorizationCredentials] = Depends(security)):
-    if credentials is None:
-        raise HTTPException(status_code=401, detail="Missing token")
-    username = verify_token(credentials.credentials)
-    if not username:
-        raise HTTPException(status_code=401, detail="Invalid token")
-
+def sync_data():
+    """Devuelve toda la información global del sistema (pública para sincronización inicial)."""
     data = {key: load_json(file) for key, file in FILES.items()}
     return data
 
 @app.post("/api/sync/upload")
 async def upload_all_data(request: Request, credentials: Optional[HTTPAuthorizationCredentials] = Depends(security)):
+    """Recibe los datos del frontend y los guarda en los archivos locales."""
     if credentials is None:
         raise HTTPException(status_code=401, detail="Missing token")
     username = verify_token(credentials.credentials)
