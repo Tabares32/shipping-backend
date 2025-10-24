@@ -6,6 +6,11 @@ import time, json, os, hmac, hashlib, base64
 
 app = FastAPI(title="Shipping Backend")
 
+# --- Health check ---
+@app.get("/api/health")
+def health_check():
+    return {"status": "ok"}
+
 # --- CORS ---
 app.add_middleware(
     CORSMiddleware,

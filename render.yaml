@@ -3,12 +3,10 @@ services:
     name: shipping-backend
     env: python
     plan: free
-    buildCommand: pip install -r requirements.txt
-    startCommand: uvicorn app:app --host 0.0.0.0 --port $PORT
+    buildCommand: ""
+    startCommand: uvicorn main:app --host 0.0.0.0 --port 10000
+    envVars:
+      - key: APP_SECRET
+        value: change_this_secret
     healthCheckPath: /api/health
     autoDeploy: true
-    envVars:
-      - key: DB_PATH
-        value: data.db
-      - key: CORS_ORIGINS
-        value: "*"
