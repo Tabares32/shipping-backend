@@ -2,20 +2,14 @@ from fastapi import FastAPI, HTTPException, Depends, Request
 from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from typing import Optional
 import time, json, os, hmac, hashlib, base64
 
 app = FastAPI(title="Shipping Backend")
 
-# --- Health check ---
-@app.get("/api/health")
-def health():
-    return {"status": "ok"}
-
 # --- CORS ---
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # ⚠️ Cambiar por tu dominio vercel en producción
+    allow_origins=["*"],  # ⚠️ Cambia esto por tu dominio Vercel en producción
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -86,7 +80,6 @@ def verify_token(token):
 
 security = HTTPBearer()
 
-# --- Usuario modelo ---
 class LoginPayload(BaseModel):
     username: str
     password: str
@@ -129,7 +122,8 @@ def me(credentials: HTTPAuthorizationCredentials = Depends(security)):
 @app.get("/api/users")
 def list_users(credentials: HTTPAuthorizationCredentials = Depends(security)):
     username = verify_token(credentials.credentials)
-    print("🔐 Verificando acceso para:", username)
+    print("🔐 Token recibido:", credentials.credentials)
+    print("🔍 Usuario verificado:", username)
     users = load_json(FILES["users"])
     current = next((u for u in users if u["username"].strip().lower() == username), None)
     if not current or current.get("role") != "admin":
@@ -158,8 +152,7 @@ def create_user(payload: LoginPayload, credentials: HTTPAuthorizationCredentials
 # --- Sincronización global ---
 @app.get("/api/sync/data")
 def sync_data():
-    data = {key: load_json(file) for key, file in FILES.items()}
-    return data
+    return {key: load_json(file) for key, file in FILES.items()}
 
 @app.post("/api/sync/upload")
 async def sync_upload(request: Request, credentials: HTTPAuthorizationCredentials = Depends(security)):
