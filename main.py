@@ -168,4 +168,5 @@ async def sync_upload(request: Request, credentials: HTTPAuthorizationCredential
     for key, file in FILES.items():
         if key in payload:
             save_json(file, payload[key])
+	print(f"[SYNC] {username} subió datos a las {time.strftime('%H:%M:%S')}")
     return {"status": "ok", "message": "Datos sincronizados correctamente"}
