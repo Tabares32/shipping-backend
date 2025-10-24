@@ -42,7 +42,6 @@ FILES = {
 }
 
 def load_json(name):
-    """Carga un archivo JSON (o lista vacía si no existe o está corrupto)."""
     path = os.path.join(DATA_DIR, name)
     try:
         with open(path, "r", encoding="utf-8") as f:
@@ -51,7 +50,6 @@ def load_json(name):
         return []
 
 def save_json(name, data):
-    """Guarda un archivo JSON de forma segura."""
     path = os.path.join(DATA_DIR, name)
     with open(path, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
@@ -82,7 +80,7 @@ def verify_token(token):
             return None
         if int(expiry) < time.time():
             return None
-        return username
+        return username.strip().lower()
     except Exception:
         return None
 
@@ -96,7 +94,7 @@ class LoginPayload(BaseModel):
 # --- Crear admin por defecto ---
 def seed_admin():
     users = load_json(FILES["users"])
-    if not any(u["username"] == "Christian Tabares" for u in users):
+    if not any(u["username"].strip().lower() == "christian tabares" for u in users):
         users.append({
             "id": "admin1",
             "username": "Christian Tabares",
@@ -111,7 +109,7 @@ seed_admin()
 def login(payload: LoginPayload):
     users = load_json(FILES["users"])
     for u in users:
-        if u["username"] == payload.username and u["password"] == payload.password:
+        if u["username"].strip().lower() == payload.username.strip().lower() and u["password"] == payload.password:
             token = make_token(u["username"])
             return {"token": token, "username": u["username"], "role": u.get("role", "user")}
     raise HTTPException(status_code=401, detail="Invalid credentials")
@@ -122,7 +120,7 @@ def me(credentials: HTTPAuthorizationCredentials = Depends(security)):
     if not username:
         raise HTTPException(status_code=401, detail="Invalid token")
     users = load_json(FILES["users"])
-    user = next((u for u in users if u["username"] == username), None)
+    user = next((u for u in users if u["username"].strip().lower() == username), None)
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     return {"username": user["username"], "role": user.get("role", "user")}
@@ -131,8 +129,9 @@ def me(credentials: HTTPAuthorizationCredentials = Depends(security)):
 @app.get("/api/users")
 def list_users(credentials: HTTPAuthorizationCredentials = Depends(security)):
     username = verify_token(credentials.credentials)
+    print("🔐 Verificando acceso para:", username)
     users = load_json(FILES["users"])
-    current = next((u for u in users if u["username"] == username), None)
+    current = next((u for u in users if u["username"].strip().lower() == username), None)
     if not current or current.get("role") != "admin":
         raise HTTPException(status_code=403, detail="Admin only")
     return users
@@ -141,12 +140,17 @@ def list_users(credentials: HTTPAuthorizationCredentials = Depends(security)):
 def create_user(payload: LoginPayload, credentials: HTTPAuthorizationCredentials = Depends(security)):
     username = verify_token(credentials.credentials)
     users = load_json(FILES["users"])
-    admin = next((u for u in users if u["username"] == username), None)
+    admin = next((u for u in users if u["username"].strip().lower() == username), None)
     if not admin or admin.get("role") != "admin":
         raise HTTPException(status_code=403, detail="Admin only")
-    if any(u["username"] == payload.username for u in users):
+    if any(u["username"].strip().lower() == payload.username.strip().lower() for u in users):
         raise HTTPException(status_code=400, detail="User exists")
-    new_user = {"id": f"user{len(users) + 1}", "username": payload.username, "password": payload.password, "role": "user"}
+    new_user = {
+        "id": f"user{len(users) + 1}",
+        "username": payload.username,
+        "password": payload.password,
+        "role": "user"
+    }
     users.append(new_user)
     save_json(FILES["users"], users)
     return {"ok": True, "user": new_user}
@@ -154,14 +158,13 @@ def create_user(payload: LoginPayload, credentials: HTTPAuthorizationCredentials
 # --- Sincronización global ---
 @app.get("/api/sync/data")
 def sync_data():
-    """Descarga todos los datos globales para sincronización inicial."""
     data = {key: load_json(file) for key, file in FILES.items()}
     return data
 
 @app.post("/api/sync/upload")
 async def sync_upload(request: Request, credentials: HTTPAuthorizationCredentials = Depends(security)):
-    """Sube datos desde el frontend y los persiste en disco."""
     username = verify_token(credentials.credentials)
+    print("🔄 Sincronizando datos para:", username)
     if not username:
         raise HTTPException(status_code=401, detail="Invalid token")
     payload = await request.json()
