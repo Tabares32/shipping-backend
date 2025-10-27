@@ -104,13 +104,30 @@ seed_admin()
 
 # --- Autenticación ---
 @app.post("/api/auth/login")
-def login(payload: LoginPayload):
+def login(payload: LoginPayload, request: Request):
     users = load_json(FILES["users"])
+    ip = request.client.host
+    user_agent = request.headers.get("user-agent", "")
+
     for u in users:
         if u["username"].strip().lower() == payload.username.strip().lower() and u["password"] == payload.password:
-            token = make_token(u["username"])
-            return {"token": token, "username": u["username"], "role": u.get("role", "user")}
-    raise HTTPException(status_code=401, detail="Invalid credentials")
+            expiry = int(time.time()) + 3600
+            payload_str = f"{u['username']}:{expiry}"
+            signature = hmac.new(SECRET.encode(), payload_str.encode(), hashlib.sha256).hexdigest()
+            token = base64.urlsafe_b64encode(f"{payload_str}:{signature}".encode()).decode()
+
+            print(f"🔐 Login: {u['username']} desde IP {ip} con navegador {user_agent}")
+            return {
+                "token": token,
+                "username": u["username"],
+                "role": u.get("role", "user"),
+                "expiry": expiry,
+                "signature": signature[:12],  # solo los primeros 12 caracteres para mostrar
+                "ip": ip,
+                "userAgent": user_agent
+            }
+
+    raise HTTPException(status_code=401, detail="Credenciales inválidas")
 
 @app.get("/api/auth/me")
 def me(credentials: HTTPAuthorizationCredentials = Depends(security)):
