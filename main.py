@@ -183,7 +183,13 @@ async def sync_upload(request: Request, credentials: HTTPAuthorizationCredential
     if not username:
         raise HTTPException(status_code=401, detail="Invalid token")
     payload = await request.json()
+
     for key, file in FILES.items():
         if key in payload:
-            save_json(file, payload[key])
+            value = payload[key]
+            # ✅ Solo guardar si es un array con contenido
+            if isinstance(value, list) and len(value) > 0:
+                save_json(file, value)
+            else:
+                print(f"⚠️ Ignorado {key}: array vacío recibido")
     return {"status": "ok", "message": "Datos sincronizados correctamente"}
