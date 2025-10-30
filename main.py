@@ -27,17 +27,17 @@ os.makedirs(DATA_DIR, exist_ok=True)
 
 FILES = {
     "users": "users.json",
-    "fedexOrders": "fedex_orders.json",
-    "uspsOrders": "usps_orders.json",
-    "retainedOrders": "retained_orders.json",
-    "finishedGoods": "finished_goods.json",
-    "materialsBOM": "materials_bom.json",
+    "fedex_orders": "fedex_orders.json",
+    "usps_orders": "usps_orders.json",
+    "retained_orders": "retained_orders.json",
+    "finished_goods": "finished_goods.json",
+    "material_bom": "material_bom.json",
     "observations": "observations.json",
-    "partNumbers": "part_numbers.json",
-    "invoiceSearch": "invoice_search.json",
-    "invoiceHistory": "invoice_history.json",
-    "cutsReport": "cuts_report.json",
-    "dailyReport": "daily_report.json"
+    "part_numbers": "part_numbers.json",
+    "invoice_search": "invoice_search.json",
+    "invoice_history": "invoice_history.json",
+    "cuts_report": "cuts_report.json",
+    "daily_report": "daily_report.json"
 }
 
 def load_json(name):
@@ -122,7 +122,7 @@ def login(payload: LoginPayload, request: Request):
                 "username": u["username"],
                 "role": u.get("role", "user"),
                 "expiry": expiry,
-                "signature": signature[:12],  # solo los primeros 12 caracteres para mostrar
+                "signature": signature[:12],
                 "ip": ip,
                 "userAgent": user_agent
             }
@@ -187,7 +187,6 @@ async def sync_upload(request: Request, credentials: HTTPAuthorizationCredential
     for key, file in FILES.items():
         if key in payload:
             value = payload[key]
-            # ✅ Solo guardar si es un array con contenido
             if isinstance(value, list) and len(value) > 0:
                 save_json(file, value)
             else:
