@@ -10,7 +10,7 @@ app = FastAPI(title="Shipping Backend")
 # --- Health check ---
 @app.head("/api/health")
 def health_head():
-    return {"status": "ok"}
+    return
 
 # --- CORS ---
 app.add_middleware(
