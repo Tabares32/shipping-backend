@@ -2,7 +2,6 @@ from fastapi import FastAPI, HTTPException, Depends, Request
 from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from typing import Optional
 import time, json, os, hmac, hashlib, base64
 
 app = FastAPI(title="Shipping Backend")
@@ -19,99 +18,60 @@ def health_head():
 # --- CORS ---
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # ⚠️ cambia en producción a tu dominio exacto
+    allow_origins=["*"],  # ⚠️ Cambia esto por tu dominio Vercel en producción
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# --- Rutas de datos ---
-DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
+# --- Archivos de datos ---
+BASE_DIR = os.path.dirname(__file__)
+DATA_DIR = os.path.join(BASE_DIR, "persistent_data")
 os.makedirs(DATA_DIR, exist_ok=True)
 
-USERS_FILE = os.path.join(DATA_DIR, "users.json")
-STORAGE_FILE = os.path.join(DATA_DIR, "storage.json")
-
-# Archivos por módulo
 FILES = {
     "users": "users.json",
-    "fedexOrders": "fedex_orders.json",
-    "uspsOrders": "usps_orders.json",
-    "retainedOrders": "retained_orders.json",
-    "finishedGoods": "finished_goods.json",
-    "materialsBOM": "materials_bom.json",
+    "fedex_orders": "fedex_orders.json",
+    "usps_orders": "usps_orders.json",
+    "retained_orders": "retained_orders.json",
+    "finished_goods": "finished_goods.json",
+    "material_bom": "material_bom.json",
     "observations": "observations.json",
-    "partNumbers": "part_numbers.json",
-    "invoiceSearch": "invoice_search.json",
-    "invoiceHistory": "invoice_history.json",
-    "cutsReport": "cuts_report.json",
-    "dailyReport": "daily_report.json"
+    "part_numbers": "part_numbers.json",
+    "invoice_search": "invoice_search.json",
+    "invoice_history": "invoice_history.json",
+    "cuts_report": "cuts_report.json",
+    "daily_report": "daily_report.json"
 }
 
-# Crear archivos vacíos si no existen
-for filename in FILES.values():
-    path = os.path.join(DATA_DIR, filename)
-    if not os.path.exists(path):
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump([], f)
-
-# --- Funciones auxiliares ---
-def load_json(filename):
-    path = os.path.join(DATA_DIR, filename)
+def load_json(name):
+    path = os.path.join(DATA_DIR, name)
     try:
         with open(path, "r", encoding="utf-8") as f:
             return json.load(f)
     except Exception:
         return []
 
-def save_json(filename, data):
-    path = os.path.join(DATA_DIR, filename)
+def save_json(name, data):
+    path = os.path.join(DATA_DIR, name)
     with open(path, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
-def load_users():
-    if not os.path.exists(USERS_FILE):
-        return []
-    with open(USERS_FILE, "r") as f:
-        return json.load(f)
+# --- Crear archivos iniciales ---
+for file in FILES.values():
+    path = os.path.join(DATA_DIR, file)
+    if not os.path.exists(path):
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump([], f)
 
-def save_users(users):
-    with open(USERS_FILE, "w") as f:
-        json.dump(users, f)
-
-def load_storage():
-    if not os.path.exists(STORAGE_FILE):
-        with open(STORAGE_FILE, "w") as f:
-            json.dump({}, f)
-    with open(STORAGE_FILE, "r") as f:
-        return json.load(f)
-
-def save_storage(data):
-    with open(STORAGE_FILE, "w") as f:
-        json.dump(data, f)
-
-# --- Crear admin por defecto ---
-def seed_users():
-    if not os.path.exists(USERS_FILE):
-        users = [{
-            "id": "admin1",
-            "username": "Christian Tabares",
-            "password": "Shipping3",
-            "role": "admin"
-        }]
-        with open(USERS_FILE, "w") as f:
-            json.dump(users, f)
-seed_users()
-
-# --- Tokens ---
+# --- Token helpers ---
 SECRET = os.environ.get("APP_SECRET", "change_this_secret")
 
 def make_token(username, expires_in=3600):
     expiry = int(time.time()) + expires_in
     payload = f"{username}:{expiry}"
     sig = hmac.new(SECRET.encode(), payload.encode(), hashlib.sha256).hexdigest()
-    token = base64.urlsafe_b64encode(f"{payload}:{sig}".encode()).decode()
-    return token
+    return base64.urlsafe_b64encode(f"{payload}:{sig}".encode()).decode()
 
 def verify_token(token):
     try:
@@ -123,107 +83,116 @@ def verify_token(token):
             return None
         if int(expiry) < time.time():
             return None
-        return username
+        return username.strip().lower()
     except Exception:
         return None
 
 security = HTTPBearer()
 
-# --- Modelos ---
 class LoginPayload(BaseModel):
     username: str
     password: str
 
+# --- Crear admin por defecto ---
+def seed_admin():
+    users = load_json(FILES["users"])
+    if not any(u["username"].strip().lower() == "christian tabares" for u in users):
+        users.append({
+            "id": "admin1",
+            "username": "Christian Tabares",
+            "password": "Shipping3",
+            "role": "admin"
+        })
+        save_json(FILES["users"], users)
+seed_admin()
+
 # --- Autenticación ---
 @app.post("/api/auth/login")
-def login(payload: LoginPayload):
-    users = load_users()
+def login(payload: LoginPayload, request: Request):
+    users = load_json(FILES["users"])
+    ip = request.client.host
+    user_agent = request.headers.get("user-agent", "")
+
     for u in users:
-        if u["username"] == payload.username and u["password"] == payload.password:
-            token = make_token(u["username"])
-            return {"token": token, "username": u["username"], "role": u.get("role", "user")}
-    raise HTTPException(status_code=401, detail="Invalid credentials")
+        if u["username"].strip().lower() == payload.username.strip().lower() and u["password"] == payload.password:
+            expiry = int(time.time()) + 3600
+            payload_str = f"{u['username']}:{expiry}"
+            signature = hmac.new(SECRET.encode(), payload_str.encode(), hashlib.sha256).hexdigest()
+            token = base64.urlsafe_b64encode(f"{payload_str}:{signature}".encode()).decode()
+
+            print(f"🔐 Login: {u['username']} desde IP {ip} con navegador {user_agent}")
+            return {
+                "token": token,
+                "username": u["username"],
+                "role": u.get("role", "user"),
+                "expiry": expiry,
+                "signature": signature[:12],
+                "ip": ip,
+                "userAgent": user_agent
+            }
+
+    raise HTTPException(status_code=401, detail="Credenciales inválidas")
 
 @app.get("/api/auth/me")
 def me(credentials: HTTPAuthorizationCredentials = Depends(security)):
-    token = credentials.credentials
-    username = verify_token(token)
-    if not username:
-        raise HTTPException(status_code=401, detail="Invalid token")
-    users = load_users()
-    for u in users:
-        if u["username"] == username:
-            return {"username": u["username"], "role": u.get("role", "user")}
-    raise HTTPException(status_code=404, detail="User not found")
-
-# --- CRUD Usuarios ---
-@app.post("/api/users")
-def create_user(payload: LoginPayload, credentials: Optional[HTTPAuthorizationCredentials] = Depends(security)):
-    if credentials is None:
-        raise HTTPException(status_code=401, detail="Missing token")
     username = verify_token(credentials.credentials)
     if not username:
         raise HTTPException(status_code=401, detail="Invalid token")
+    users = load_json(FILES["users"])
+    user = next((u for u in users if u["username"].strip().lower() == username), None)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    return {"username": user["username"], "role": user.get("role", "user")}
 
-    users = load_users()
-    admin = next((x for x in users if x["username"] == username), None)
+# --- Usuarios ---
+@app.get("/api/users")
+def list_users(credentials: HTTPAuthorizationCredentials = Depends(security)):
+    username = verify_token(credentials.credentials)
+    print("🔐 Token recibido:", credentials.credentials)
+    print("🔍 Usuario verificado:", username)
+    users = load_json(FILES["users"])
+    current = next((u for u in users if u["username"].strip().lower() == username), None)
+    if not current or current.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin only")
+    return users
+
+@app.post("/api/users")
+def create_user(payload: LoginPayload, credentials: HTTPAuthorizationCredentials = Depends(security)):
+    username = verify_token(credentials.credentials)
+    users = load_json(FILES["users"])
+    admin = next((u for u in users if u["username"].strip().lower() == username), None)
     if not admin or admin.get("role") != "admin":
         raise HTTPException(status_code=403, detail="Admin only")
-
-    if any(u["username"] == payload.username for u in users):
+    if any(u["username"].strip().lower() == payload.username.strip().lower() for u in users):
         raise HTTPException(status_code=400, detail="User exists")
+    new_user = {
+        "id": f"user{len(users) + 1}",
+        "username": payload.username,
+        "password": payload.password,
+        "role": "user"
+    }
+    users.append(new_user)
+    save_json(FILES["users"], users)
+    return {"ok": True, "user": new_user}
 
-    new = {"id": f"user{len(users) + 1}", "username": payload.username, "password": payload.password, "role": "user"}
-    users.append(new)
-    save_users(users)
-    return {"ok": True, "user": {"username": new["username"], "id": new["id"]}}
-
-# --- Storage Genérico ---
-@app.get("/api/storage/{key}")
-def get_storage(key: str, credentials: Optional[HTTPAuthorizationCredentials] = Depends(security)):
-    if credentials is None:
-        raise HTTPException(status_code=401, detail="Missing token")
-    username = verify_token(credentials.credentials)
-    if not username:
-        raise HTTPException(status_code=401, detail="Invalid token")
-    data = load_storage()
-    return {"key": key, "value": data.get(key)}
-
-@app.post("/api/storage/{key}")
-async def set_storage(key: str, request: Request, credentials: Optional[HTTPAuthorizationCredentials] = Depends(security)):
-    if credentials is None:
-        raise HTTPException(status_code=401, detail="Missing token")
-    username = verify_token(credentials.credentials)
-    if not username:
-        raise HTTPException(status_code=401, detail="Invalid token")
-    body = await request.json()
-    data = load_storage()
-    data[key] = body.get("value")
-    save_storage(data)
-    return {"ok": True}
-
-# --- NUEVOS: Sincronización global ---
+# --- Sincronización global ---
 @app.get("/api/sync/data")
-def get_all_data(credentials: Optional[HTTPAuthorizationCredentials] = Depends(security)):
-    if credentials is None:
-        raise HTTPException(status_code=401, detail="Missing token")
-    username = verify_token(credentials.credentials)
-    if not username:
-        raise HTTPException(status_code=401, detail="Invalid token")
-
-    data = {key: load_json(file) for key, file in FILES.items()}
-    return data
+def sync_data():
+    return {key: load_json(file) for key, file in FILES.items()}
 
 @app.post("/api/sync/upload")
-async def upload_all_data(request: Request, credentials: Optional[HTTPAuthorizationCredentials] = Depends(security)):
-    if credentials is None:
-        raise HTTPException(status_code=401, detail="Missing token")
+async def sync_upload(request: Request, credentials: HTTPAuthorizationCredentials = Depends(security)):
     username = verify_token(credentials.credentials)
+    print("🔄 Sincronizando datos para:", username)
     if not username:
         raise HTTPException(status_code=401, detail="Invalid token")
-
     payload = await request.json()
+
     for key, file in FILES.items():
         if key in payload:
-            save_json(file, payload[key])
+            value = payload[key]
+            if isinstance(value, list) and len(value) > 0:
+                save_json(file, value)
+            else:
+                print(f"⚠️ Ignorado {key}: array vacío recibido")
     return {"status": "ok", "message": "Datos sincronizados correctamente"}
