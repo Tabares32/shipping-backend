@@ -6,11 +6,6 @@ import time, json, os, hmac, hashlib, base64
 
 app = FastAPI(title="Shipping Backend")
 
-@app.get("/api/debug/users")
-def debug_users():
-    users = load_json(FILES["users"])
-    return users
-
 # --- Health check ---
 @app.get("/api/health")
 def health_get():
