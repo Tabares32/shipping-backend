@@ -67,7 +67,7 @@ for file in FILES.values():
 # --- Token helpers ---
 SECRET = os.environ.get("APP_SECRET", "change_this_secret")
 
-def make_token(username, expires_in=3600):
+def make_token(username, expires_in=86400):
     expiry = int(time.time()) + expires_in
     payload = f"{username}:{expiry}"
     sig = hmac.new(SECRET.encode(), payload.encode(), hashlib.sha256).hexdigest()
@@ -115,7 +115,7 @@ def login(payload: LoginPayload, request: Request):
 
     for u in users:
         if u["username"].strip().lower() == payload.username.strip().lower() and u["password"] == payload.password:
-            expiry = int(time.time()) + 3600
+            expiry = int(time.time()) + 86400
             payload_str = f"{u['username']}:{expiry}"
             signature = hmac.new(SECRET.encode(), payload_str.encode(), hashlib.sha256).hexdigest()
             token = base64.urlsafe_b64encode(f"{payload_str}:{signature}".encode()).decode()
