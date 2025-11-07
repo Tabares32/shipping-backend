@@ -1,3 +1,20 @@
-[{"id": "admin1", "username": "Christian Tabares", "password": "Shipping3", "role": "admin"}]
-[{"id": "user2", "username": "Sergio Collins", "password": "Import123", "role": "user"}]
-[{"id": "user3", "username": "Marco Aurelio", "password": "Marco123", "role": "user"}]
+[
+  {
+    "id": "admin1",
+    "username": "Christian Tabares",
+    "password": "Shipping3",
+    "role": "admin"
+  },
+  {
+    "id": "user2",
+    "username": "Sergio Collins",
+    "password": "Import123",
+    "role": "user"
+  },
+  {
+    "id": "user3",
+    "username": "Marco Aurelio",
+    "password": "Marco123",
+    "role": "user"
+  }
+]
