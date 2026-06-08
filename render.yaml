@@ -1,0 +1,14 @@
+services:
+  - type: web
+    name: shipping-backend
+    env: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port 10000
+    envVars:
+      - key: APP_SECRET
+        generateValue: true          # Render genera un secreto aleatorio seguro automáticamente
+      - key: ALLOWED_ORIGINS
+        value: http://localhost:3000,https://TU-APP.vercel.app   # ← reemplaza con tu URL de Vercel
+    healthCheckPath: /api/health
+    autoDeploy: true
