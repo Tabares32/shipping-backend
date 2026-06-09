@@ -1,46 +1,42 @@
+"""
+Shipping Backend v1.3.0 — MongoDB Atlas
+Persistencia real: todos los datos viven en MongoDB, no en archivos JSON.
+"""
+
 from fastapi import FastAPI, HTTPException, Depends, Request
-from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from typing import Optional
-import time, json, os, hmac, hashlib, base64, bcrypt, httpx
+from pydantic import BaseModel
+from typing import Optional, List, Any
+from pymongo import MongoClient
+from bson import ObjectId
+import time, os, hmac, hashlib, base64, bcrypt, httpx
 
-# ─────────────────────────────────────────────────────────────────
-#  VERSIÓN DE LA APLICACIÓN
-#  Cambia APP_VERSION aquí cada vez que hagas un deploy nuevo.
-#  El frontend lo compara con la versión almacenada en localStorage
-#  y muestra el banner "Nueva versión disponible".
-# ─────────────────────────────────────────────────────────────────
-APP_VERSION  = "1.2.0"
-APP_VERSION_NOTES = "Seguridad mejorada: passwords encriptados, Google OAuth, CRUD completo de usuarios, sistema de actualizaciones."
+# ── Versión ────────────────────────────────────────────────────────────────────
+APP_VERSION       = "1.3.0"
+APP_VERSION_NOTES = "MongoDB Atlas: datos persistentes, multiusuario real, roles editor/viewer."
 
 app = FastAPI(title="Shipping Backend", version=APP_VERSION)
 
-# ── Health check ──────────────────────────────────────────────────
+# ── Health / Version ───────────────────────────────────────────────────────────
 @app.get("/api/health")
-def health_get():
+def health():
     return {"status": "ok"}
 
 @app.head("/api/health")
 def health_head():
     return
 
-# ── Versión ───────────────────────────────────────────────────────
 @app.get("/api/version")
 def get_version():
-    return {
-        "version": APP_VERSION,
-        "notes": APP_VERSION_NOTES
-    }
+    return {"version": APP_VERSION, "notes": APP_VERSION_NOTES}
 
-# ── CORS ──────────────────────────────────────────────────────────
-# Pon tus dominios reales en la variable de entorno ALLOWED_ORIGINS
-# separados por coma, p.ej.:  https://mi-app.vercel.app,https://otro.com
+# ── CORS ───────────────────────────────────────────────────────────────────────
 ALLOWED_ORIGINS = [
     o.strip()
     for o in os.environ.get(
         "ALLOWED_ORIGINS",
-        "http://localhost:3000,https://shipping-backend-kgm5.onrender.com"
+        "http://localhost:3000,https://shipping-frontend-rho.vercel.app"
     ).split(",")
     if o.strip()
 ]
@@ -53,51 +49,62 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ── Archivos de datos ─────────────────────────────────────────────
-BASE_DIR = os.path.dirname(__file__)
-DATA_DIR  = os.path.join(BASE_DIR, "data")
-os.makedirs(DATA_DIR, exist_ok=True)
+# ── MongoDB ────────────────────────────────────────────────────────────────────
+MONGO_URI = os.environ.get(
+    "MONGO_URI",
+    "mongodb+srv://shippinguser:5IYOL8jte8hA4Cxf@shipping-db.6e3wp9f.mongodb.net/?appName=shipping-db"
+)
 
-FILES = {
-    "users":           "users.json",
-    "fedex_orders":    "fedex_orders.json",
-    "usps_orders":     "usps_orders.json",
-    "retained_orders": "retained_orders.json",
-    "finished_goods":  "finished_goods.json",
-    "material_bom":    "materials_bom.json",       # nombre corregido en disco
-    "observations":    "observations.json",
-    "part_numbers":    "part_numbers.json",
-    "invoice_search":  "invoice_search.json",
-    "invoice_history": "invoice_history.json",
-    "cuts_report":     "cuts_report.json",
-    "daily_report":    "daily_report.json",
+client = MongoClient(MONGO_URI)
+db     = client["shipping"]
+
+# Colecciones
+col_users          = db["users"]
+col_fedex          = db["fedex_orders"]
+col_usps           = db["usps_orders"]
+col_retained       = db["retained_orders"]
+col_finished_goods = db["finished_goods"]
+col_material_bom   = db["material_bom"]
+col_observations   = db["observations"]
+col_part_numbers   = db["part_numbers"]
+col_invoice_search = db["invoice_search"]
+col_invoice_hist   = db["invoice_history"]
+col_cuts           = db["cuts_report"]
+col_daily          = db["daily_report"]
+
+COLLECTIONS = {
+    "fedex_orders":    col_fedex,
+    "usps_orders":     col_usps,
+    "retained_orders": col_retained,
+    "finished_goods":  col_finished_goods,
+    "material_bom":    col_material_bom,
+    "observations":    col_observations,
+    "part_numbers":    col_part_numbers,
+    "invoice_search":  col_invoice_search,
+    "invoice_history": col_invoice_hist,
+    "cuts_report":     col_cuts,
+    "daily_report":    col_daily,
 }
 
-def load_json(filename):
-    path = os.path.join(DATA_DIR, filename)
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except Exception:
-        return []
+def serialize(doc):
+    """Convierte _id de ObjectId a string para JSON."""
+    if doc is None:
+        return None
+    doc = dict(doc)
+    if "_id" in doc:
+        doc["_id"] = str(doc["_id"])
+    return doc
 
-def save_json(filename, data):
-    path = os.path.join(DATA_DIR, filename)
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+def col_list(col):
+    return [serialize(d) for d in col.find()]
 
-# Crear archivos faltantes con array vacío
-for _file in FILES.values():
-    _path = os.path.join(DATA_DIR, _file)
-    if not os.path.exists(_path):
-        with open(_path, "w", encoding="utf-8") as _f:
-            json.dump([], _f)
+# ── Seguridad ──────────────────────────────────────────────────────────────────
+SECRET = os.environ.get("APP_SECRET", "change_this_in_render_env")
 
-# ── Helpers de contraseña ─────────────────────────────────────────
-def hash_password(plain: str) -> str:
+def hash_pw(plain: str) -> str:
     return bcrypt.hashpw(plain.encode(), bcrypt.gensalt()).decode()
 
-def verify_password(plain: str, hashed: str) -> bool:
+def check_pw(plain: str, hashed: str) -> bool:
     try:
         return bcrypt.checkpw(plain.encode(), hashed.encode())
     except Exception:
@@ -105,9 +112,6 @@ def verify_password(plain: str, hashed: str) -> bool:
 
 def is_hashed(pw: str) -> bool:
     return pw.startswith("$2b$") or pw.startswith("$2a$")
-
-# ── Helpers de token ──────────────────────────────────────────────
-SECRET = os.environ.get("APP_SECRET", "change_this_secret_in_render_dashboard")
 
 def make_token(username: str, expires_in: int = 86400) -> str:
     expiry  = int(time.time()) + expires_in
@@ -122,8 +126,7 @@ def verify_token(token: str) -> Optional[str]:
         if len(parts) != 3:
             return None
         username, expiry, sig = parts
-        payload  = f"{username}:{expiry}"
-        expected = hmac.new(SECRET.encode(), payload.encode(), hashlib.sha256).hexdigest()
+        expected = hmac.new(SECRET.encode(), f"{username}:{expiry}".encode(), hashlib.sha256).hexdigest()
         if not hmac.compare_digest(expected, sig):
             return None
         if int(expiry) < int(time.time()):
@@ -138,42 +141,46 @@ def get_current_user(creds: HTTPAuthorizationCredentials = Depends(security)):
     username = verify_token(creds.credentials)
     if not username:
         raise HTTPException(401, "Token inválido o expirado")
-    users = load_json(FILES["users"])
-    user  = next((u for u in users if u["username"].strip().lower() == username), None)
+    user = col_users.find_one({"username_lower": username})
     if not user:
         raise HTTPException(404, "Usuario no encontrado")
-    return user
+    return serialize(user)
 
-def require_admin(current_user: dict = Depends(get_current_user)):
-    if current_user.get("role") != "admin":
+def require_admin(u=Depends(get_current_user)):
+    if u.get("role") != "admin":
         raise HTTPException(403, "Solo administradores")
-    return current_user
+    return u
 
-# ── Seed admin por defecto ────────────────────────────────────────
+def require_editor(u=Depends(get_current_user)):
+    """admin y editor pueden escribir; viewer solo puede leer."""
+    if u.get("role") not in ("admin", "editor"):
+        raise HTTPException(403, "No tienes permisos de edición")
+    return u
+
+# ── Seed admin ─────────────────────────────────────────────────────────────────
 def seed_admin():
-    users = load_json(FILES["users"])
-    admin = next((u for u in users if u["username"].strip().lower() == "christian tabares"), None)
-    if not admin:
-        users.append({
-            "id":             "admin1",
-            "username":       "Christian Tabares",
-            "password":       hash_password("Shipping3"),
+    name = "Christian Tabares"
+    existing = col_users.find_one({"username_lower": name.lower()})
+    if not existing:
+        col_users.insert_one({
+            "username":       name,
+            "username_lower": name.lower(),
+            "password":       hash_pw("Shipping3"),
             "role":           "admin",
             "terms_accepted": True,
             "auth_provider":  "local",
         })
-        save_json(FILES["users"], users)
-    elif not is_hashed(admin.get("password", "")):
-        # Migración automática de contraseña en texto plano
-        for u in users:
-            if u["username"].strip().lower() == "christian tabares":
-                u["password"] = hash_password(u["password"])
-        save_json(FILES["users"], users)
-        print("✅ Contraseña de admin migrada a bcrypt")
+        print("✅ Admin creado en MongoDB")
+    elif not is_hashed(existing.get("password", "")):
+        col_users.update_one(
+            {"username_lower": name.lower()},
+            {"$set": {"password": hash_pw(existing["password"])}}
+        )
+        print("✅ Contraseña admin migrada a bcrypt en MongoDB")
 
 seed_admin()
 
-# ── Modelos Pydantic ──────────────────────────────────────────────
+# ── Modelos ────────────────────────────────────────────────────────────────────
 class LoginPayload(BaseModel):
     username: str
     password: str
@@ -181,7 +188,7 @@ class LoginPayload(BaseModel):
 class UserCreatePayload(BaseModel):
     username: str
     password: str
-    role: str = "user"
+    role: str = "editor"   # roles: admin | editor | viewer
 
 class UserUpdatePayload(BaseModel):
     username: Optional[str] = None
@@ -189,57 +196,44 @@ class UserUpdatePayload(BaseModel):
     role:     Optional[str] = None
 
 class GoogleAuthPayload(BaseModel):
-    token:          str   # Google ID token
+    token:          str
     terms_accepted: bool
 
-# ── LOGIN normal ──────────────────────────────────────────────────
+class BulkUpsertPayload(BaseModel):
+    records: List[Any]
+
+# ── AUTH ───────────────────────────────────────────────────────────────────────
 @app.post("/api/auth/login")
 def login(payload: LoginPayload, request: Request):
-    users = load_json(FILES["users"])
-    ip    = request.client.host
+    user = col_users.find_one({"username_lower": payload.username.strip().lower()})
+    if not user:
+        raise HTTPException(401, "Credenciales inválidas")
 
-    for u in users:
-        if u["username"].strip().lower() != payload.username.strip().lower():
-            continue
-        pw = u.get("password", "")
-        # Migración on-the-fly si la contraseña todavía está en texto plano
-        if not is_hashed(pw):
-            if pw != payload.password:
-                break
-            u["password"] = hash_password(pw)
-            save_json(FILES["users"], users)
-        elif not verify_password(payload.password, pw):
-            break
+    pw = user.get("password", "")
+    if not is_hashed(pw):
+        if pw != payload.password:
+            raise HTTPException(401, "Credenciales inválidas")
+        col_users.update_one({"_id": user["_id"]}, {"$set": {"password": hash_pw(pw)}})
+    elif not check_pw(payload.password, pw):
+        raise HTTPException(401, "Credenciales inválidas")
 
-        token  = make_token(u["username"])
-        expiry = int(time.time()) + 86400
-        sig    = token[-12:]
-        print(f"🔐 Login OK: {u['username']} desde {ip}")
-        return {
-            "token":          token,
-            "username":       u["username"],
-            "role":           u.get("role", "user"),
-            "expiry":         expiry,
-            "signature":      sig,
-            "ip":             ip,
-            "userAgent":      request.headers.get("user-agent", ""),
-            "terms_accepted": u.get("terms_accepted", True),
-        }
+    token = make_token(user["username"])
+    print(f"🔐 Login: {user['username']} desde {request.client.host}")
+    return {
+        "token":          token,
+        "username":       user["username"],
+        "role":           user.get("role", "editor"),
+        "expiry":         int(time.time()) + 86400,
+        "terms_accepted": user.get("terms_accepted", True),
+    }
 
-    raise HTTPException(401, "Credenciales inválidas")
-
-# ── LOGIN Google OAuth ────────────────────────────────────────────
 @app.post("/api/auth/google")
-async def google_login(payload: GoogleAuthPayload, request: Request):
+async def google_login(payload: GoogleAuthPayload):
     if not payload.terms_accepted:
         raise HTTPException(400, "Debes aceptar los términos y condiciones")
-
-    # Verificar el ID token con Google
     try:
-        async with httpx.AsyncClient(timeout=10) as client:
-            resp = await client.get(
-                f"https://oauth2.googleapis.com/tokeninfo?id_token={payload.token}"
-            )
+        async with httpx.AsyncClient(timeout=10) as c:
+            resp = await c.get(f"https://oauth2.googleapis.com/tokeninfo?id_token={payload.token}")
         if resp.status_code != 200:
             raise HTTPException(401, "Token de Google inválido")
         g = resp.json()
@@ -250,122 +244,173 @@ async def google_login(payload: GoogleAuthPayload, request: Request):
     name      = g.get("name", email)
     google_id = g.get("sub", "")
     if not email:
-        raise HTTPException(400, "No se pudo obtener el email de Google")
+        raise HTTPException(400, "No se pudo obtener email de Google")
 
-    users = load_json(FILES["users"])
-    user  = next(
-        (u for u in users if u.get("google_id") == google_id or u.get("email") == email),
-        None
-    )
-
+    user = col_users.find_one({"$or": [{"google_id": google_id}, {"email": email}]})
     if not user:
-        user = {
-            "id":             f"g{len(users)+1}",
+        doc = {
             "username":       name,
+            "username_lower": name.lower(),
             "email":          email,
             "google_id":      google_id,
             "password":       "",
-            "role":           "user",
+            "role":           "editor",
             "terms_accepted": True,
             "auth_provider":  "google",
         }
-        users.append(user)
+        col_users.insert_one(doc)
+        user = col_users.find_one({"google_id": google_id})
     else:
-        user["terms_accepted"] = True
-        user["google_id"]      = google_id   # actualizar por si cambió
-
-    save_json(FILES["users"], users)
+        col_users.update_one({"_id": user["_id"]}, {"$set": {"terms_accepted": True, "google_id": google_id}})
 
     token = make_token(user["username"])
     return {
         "token":          token,
         "username":       user["username"],
-        "role":           user.get("role", "user"),
+        "role":           user.get("role", "editor"),
         "expiry":         int(time.time()) + 86400,
         "terms_accepted": True,
     }
 
-# ── /me ───────────────────────────────────────────────────────────
 @app.get("/api/auth/me")
-def me(current_user: dict = Depends(get_current_user)):
-    return {
-        "username":       current_user["username"],
-        "role":           current_user.get("role", "user"),
-        "terms_accepted": current_user.get("terms_accepted", True),
-    }
+def me(u=Depends(get_current_user)):
+    return {"username": u["username"], "role": u.get("role", "editor"), "terms_accepted": u.get("terms_accepted", True)}
 
-# ── Usuarios — CRUD completo ──────────────────────────────────────
+# ── USUARIOS ───────────────────────────────────────────────────────────────────
 @app.get("/api/users")
-def list_users(admin: dict = Depends(require_admin)):
-    users = load_json(FILES["users"])
+def list_users(admin=Depends(require_admin)):
+    users = [serialize(u) for u in col_users.find()]
     return [{k: v for k, v in u.items() if k != "password"} for u in users]
 
 @app.post("/api/users")
-def create_user(payload: UserCreatePayload, admin: dict = Depends(require_admin)):
-    users = load_json(FILES["users"])
-    if any(u["username"].strip().lower() == payload.username.strip().lower() for u in users):
+def create_user(payload: UserCreatePayload, admin=Depends(require_admin)):
+    if col_users.find_one({"username_lower": payload.username.strip().lower()}):
         raise HTTPException(400, "El usuario ya existe")
-    new_user = {
-        "id":             f"u{len(users)+1}",
-        "username":       payload.username,
-        "password":       hash_password(payload.password),
+    if payload.role not in ("admin", "editor", "viewer"):
+        raise HTTPException(400, "Rol inválido. Usa: admin, editor o viewer")
+    doc = {
+        "username":       payload.username.strip(),
+        "username_lower": payload.username.strip().lower(),
+        "password":       hash_pw(payload.password),
         "role":           payload.role,
         "terms_accepted": True,
         "auth_provider":  "local",
     }
-    users.append(new_user)
-    save_json(FILES["users"], users)
-    return {"ok": True, "user": {k: v for k, v in new_user.items() if k != "password"}}
+    result = col_users.insert_one(doc)
+    doc["_id"] = str(result.inserted_id)
+    return {"ok": True, "user": {k: v for k, v in doc.items() if k != "password"}}
 
 @app.put("/api/users/{user_id}")
-def update_user(user_id: str, payload: UserUpdatePayload, admin: dict = Depends(require_admin)):
-    users = load_json(FILES["users"])
-    user  = next((u for u in users if u["id"] == user_id), None)
+def update_user(user_id: str, payload: UserUpdatePayload, admin=Depends(require_admin)):
+    try:
+        oid = ObjectId(user_id)
+    except Exception:
+        raise HTTPException(400, "ID inválido")
+    user = col_users.find_one({"_id": oid})
     if not user:
         raise HTTPException(404, "Usuario no encontrado")
+    upd = {}
     if payload.username:
-        user["username"] = payload.username
+        upd["username"]       = payload.username.strip()
+        upd["username_lower"] = payload.username.strip().lower()
     if payload.password:
-        user["password"] = hash_password(payload.password)
+        upd["password"] = hash_pw(payload.password)
     if payload.role:
-        user["role"] = payload.role
-    save_json(FILES["users"], users)
-    return {"ok": True, "user": {k: v for k, v in user.items() if k != "password"}}
+        if payload.role not in ("admin", "editor", "viewer"):
+            raise HTTPException(400, "Rol inválido")
+        upd["role"] = payload.role
+    if upd:
+        col_users.update_one({"_id": oid}, {"$set": upd})
+    updated = serialize(col_users.find_one({"_id": oid}))
+    return {"ok": True, "user": {k: v for k, v in updated.items() if k != "password"}}
 
 @app.delete("/api/users/{user_id}")
-def delete_user(user_id: str, admin: dict = Depends(require_admin)):
-    users = load_json(FILES["users"])
-    user  = next((u for u in users if u["id"] == user_id), None)
+def delete_user(user_id: str, admin=Depends(require_admin)):
+    try:
+        oid = ObjectId(user_id)
+    except Exception:
+        raise HTTPException(400, "ID inválido")
+    user = col_users.find_one({"_id": oid})
     if not user:
         raise HTTPException(404, "Usuario no encontrado")
-    admins_left = sum(1 for u in users if u.get("role") == "admin")
-    if user.get("role") == "admin" and admins_left <= 1:
+    if user.get("role") == "admin" and col_users.count_documents({"role": "admin"}) <= 1:
         raise HTTPException(400, "No puedes eliminar el único administrador")
-    save_json(FILES["users"], [u for u in users if u["id"] != user_id])
+    col_users.delete_one({"_id": oid})
     return {"ok": True}
 
-# ── Sincronización ─────────────────────────────────────────────────
+# ── SYNC — leer todos los datos ────────────────────────────────────────────────
 @app.get("/api/sync/data")
-def sync_data(current_user: dict = Depends(get_current_user)):
+def sync_data(u=Depends(get_current_user)):
     result = {}
-    for key, filename in FILES.items():
-        if key == "users":
-            result[key] = [
-                {k: v for k, v in u.items() if k != "password"}
-                for u in load_json(filename)
-            ]
-        else:
-            result[key] = load_json(filename)
+    for key, col in COLLECTIONS.items():
+        result[key] = col_list(col)
+    # usuarios sin contraseña
+    result["users"] = [
+        {k: v for k, v in serialize(u).items() if k != "password"}
+        for u in col_users.find()
+    ]
     return result
 
+# ── SYNC — subir datos (solo editor/admin) ─────────────────────────────────────
 @app.post("/api/sync/upload")
-async def sync_upload(request: Request, current_user: dict = Depends(get_current_user)):
+async def sync_upload(request: Request, u=Depends(require_editor)):
     payload = await request.json()
-    for key, filename in FILES.items():
-        if key == "users":
-            continue   # usuarios solo se modifican por sus endpoints
-        if key in payload:
-            value = payload[key]
-            if isinstance(value, list) and len(value) > 0:
-                save_json(filename, value)
-    return {"status": "ok"}
+    saved   = []
+    for key, col in COLLECTIONS.items():
+        if key not in payload:
+            continue
+        records = payload[key]
+        if not isinstance(records, list) or len(records) == 0:
+            continue
+        # Upsert por campo "id" si existe, sino insert
+        for rec in records:
+            if not isinstance(rec, dict):
+                continue
+            rec_id = rec.get("id") or rec.get("_id")
+            if rec_id:
+                col.replace_one({"id": str(rec_id)}, {**rec, "id": str(rec_id)}, upsert=True)
+            else:
+                col.insert_one(rec)
+        saved.append(key)
+    return {"status": "ok", "saved": saved}
+
+# ── ENDPOINTS POR COLECCIÓN ────────────────────────────────────────────────────
+# Patrón genérico: GET (todos), POST (crear), DELETE (por id)
+
+def generic_router(col, prefix: str):
+    @app.get(f"/api/{prefix}")
+    def _list(u=Depends(get_current_user)):
+        return col_list(col)
+
+    @app.post(f"/api/{prefix}")
+    async def _create(request: Request, u=Depends(require_editor)):
+        body = await request.json()
+        if not isinstance(body, dict):
+            raise HTTPException(400, "Se esperaba un objeto JSON")
+        result = col.insert_one(body)
+        body["_id"] = str(result.inserted_id)
+        return body
+
+    @app.put(f"/api/{prefix}/{{item_id}}")
+    async def _update(item_id: str, request: Request, u=Depends(require_editor)):
+        body = await request.json()
+        col.replace_one({"id": item_id}, {**body, "id": item_id}, upsert=True)
+        return {"ok": True}
+
+    @app.delete(f"/api/{prefix}/{{item_id}}")
+    def _delete(item_id: str, u=Depends(require_editor)):
+        col.delete_one({"id": item_id})
+        return {"ok": True}
+
+# Registrar rutas para cada colección
+generic_router(col_fedex,          "fedex_orders")
+generic_router(col_usps,           "usps_orders")
+generic_router(col_retained,       "retained_orders")
+generic_router(col_finished_goods, "finished_goods")
+generic_router(col_material_bom,   "material_bom")
+generic_router(col_observations,   "observations")
+generic_router(col_part_numbers,   "part_numbers")
+generic_router(col_invoice_search, "invoice_search")
+generic_router(col_invoice_hist,   "invoice_history")
+generic_router(col_cuts,           "cuts_report")
+generic_router(col_daily,          "daily_report")

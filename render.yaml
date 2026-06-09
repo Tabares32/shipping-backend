@@ -7,8 +7,10 @@ services:
     startCommand: uvicorn main:app --host 0.0.0.0 --port 10000
     envVars:
       - key: APP_SECRET
-        generateValue: true          # Render genera un secreto aleatorio seguro automáticamente
+        generateValue: true
       - key: ALLOWED_ORIGINS
-        value: http://localhost:3000,https://TU-APP.vercel.app   # ← reemplaza con tu URL de Vercel
+        value: https://shipping-frontend-rho.vercel.app,http://localhost:3000
+      - key: MONGO_URI
+        value: mongodb+srv://shippinguser:5IYOL8jte8hA4Cxf@shipping-db.6e3wp9f.mongodb.net/?appName=shipping-db
     healthCheckPath: /api/health
     autoDeploy: true
