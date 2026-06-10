@@ -1,5 +1,5 @@
 """
-Shipping Backend v1.3.0 — MongoDB Atlas
+Shipping Backend v1.4.0 — MongoDB Atlas
 Persistencia real: todos los datos viven en MongoDB, no en archivos JSON.
 """
 
@@ -13,7 +13,7 @@ from bson import ObjectId
 import time, os, hmac, hashlib, base64, bcrypt, httpx
 
 # ── Versión ────────────────────────────────────────────────────────────────────
-APP_VERSION       = "1.3.0"
+APP_VERSION       = "1.4.0"
 APP_VERSION_NOTES = "MongoDB Atlas: datos persistentes, multiusuario real, roles editor/viewer."
 
 app = FastAPI(title="Shipping Backend", version=APP_VERSION)
