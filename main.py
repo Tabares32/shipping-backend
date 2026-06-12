@@ -1,6 +1,6 @@
 """
-Shipping Backend v1.4.0 — MongoDB Atlas
-Persistencia real: todos los datos viven en MongoDB, no en archivos JSON.
+Shipping Backend v1.5.1 — MongoDB Atlas
+Persistencia real: todos los datos viven en MongoDB.
 """
 
 from fastapi import FastAPI, HTTPException, Depends, Request
@@ -13,8 +13,8 @@ from bson import ObjectId
 import time, os, hmac, hashlib, base64, bcrypt, httpx
 
 # ── Versión ────────────────────────────────────────────────────────────────────
-APP_VERSION       = "1.4.0"
-APP_VERSION_NOTES = "MongoDB Atlas: datos persistentes, multiusuario real, roles editor/viewer."
+APP_VERSION       = "1.5.1"
+APP_VERSION_NOTES = "Corrección: edición/eliminación de materiales BOM (busca por id, materialId o _id)."
 
 app = FastAPI(title="Shipping Backend", version=APP_VERSION)
 
@@ -344,7 +344,6 @@ def sync_data(u=Depends(get_current_user)):
     result = {}
     for key, col in COLLECTIONS.items():
         result[key] = col_list(col)
-    # usuarios sin contraseña
     result["users"] = [
         {k: v for k, v in serialize(u).items() if k != "password"}
         for u in col_users.find()
@@ -362,20 +361,30 @@ async def sync_upload(request: Request, u=Depends(require_editor)):
         records = payload[key]
         if not isinstance(records, list) or len(records) == 0:
             continue
-        # Upsert por campo "id" si existe, sino insert
         for rec in records:
             if not isinstance(rec, dict):
                 continue
             rec_id = rec.get("id") or rec.get("_id")
             if rec_id:
-                col.replace_one({"id": str(rec_id)}, {**rec, "id": str(rec_id)}, upsert=True)
+                rec_copy = {k: v for k, v in rec.items() if k != "_id"}
+                rec_copy["id"] = str(rec_id)
+                col.replace_one({"id": str(rec_id)}, rec_copy, upsert=True)
             else:
                 col.insert_one(rec)
         saved.append(key)
     return {"status": "ok", "saved": saved}
 
-# ── ENDPOINTS POR COLECCIÓN ────────────────────────────────────────────────────
-# Patrón genérico: GET (todos), POST (crear), DELETE (por id)
+# ── ENDPOINTS GENÉRICOS POR COLECCIÓN ───────────────────────────────────────────
+
+def _match_filter(item_id: str):
+    """Busca un documento por 'id', 'materialId' o _id de Mongo."""
+    or_conditions = [{"id": item_id}, {"materialId": item_id}]
+    try:
+        or_conditions.append({"_id": ObjectId(item_id)})
+    except Exception:
+        pass
+    return {"$or": or_conditions}
+
 
 def generic_router(col, prefix: str):
     @app.get(f"/api/{prefix}")
@@ -387,6 +396,7 @@ def generic_router(col, prefix: str):
         body = await request.json()
         if not isinstance(body, dict):
             raise HTTPException(400, "Se esperaba un objeto JSON")
+        body.pop("_id", None)
         result = col.insert_one(body)
         body["_id"] = str(result.inserted_id)
         return body
@@ -394,13 +404,40 @@ def generic_router(col, prefix: str):
     @app.put(f"/api/{prefix}/{{item_id}}")
     async def _update(item_id: str, request: Request, u=Depends(require_editor)):
         body = await request.json()
-        col.replace_one({"id": item_id}, {**body, "id": item_id}, upsert=True)
+        body.pop("_id", None)
+        existing = col.find_one(_match_filter(item_id))
+        if existing:
+            col.update_one({"_id": existing["_id"]}, {"$set": body})
+        else:
+            body.setdefault("id", item_id)
+            col.insert_one(body)
         return {"ok": True}
+
+    @app.delete(f"/api/{prefix}/cleanup/duplicates")
+    def _cleanup_duplicates(u=Depends(require_editor)):
+        """
+        Elimina documentos duplicados según 'materialId' (o 'id' si no
+        existe materialId), dejando el primero de cada grupo.
+        """
+        seen = set()
+        to_delete = []
+        for doc in col.find():
+            key = (doc.get("materialId") or doc.get("id") or "").strip().lower()
+            if not key:
+                continue
+            if key in seen:
+                to_delete.append(doc["_id"])
+            else:
+                seen.add(key)
+        for _id in to_delete:
+            col.delete_one({"_id": _id})
+        return {"ok": True, "deleted_count": len(to_delete), "remaining": col.count_documents({})}
 
     @app.delete(f"/api/{prefix}/{{item_id}}")
     def _delete(item_id: str, u=Depends(require_editor)):
-        col.delete_one({"id": item_id})
-        return {"ok": True}
+        result = col.delete_one(_match_filter(item_id))
+        return {"ok": True, "deleted_count": result.deleted_count}
+
 
 # Registrar rutas para cada colección
 generic_router(col_fedex,          "fedex_orders")
