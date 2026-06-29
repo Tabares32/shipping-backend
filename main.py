@@ -376,9 +376,24 @@ async def sync_upload(request: Request, u=Depends(require_editor)):
 
 # ── ENDPOINTS GENÉRICOS POR COLECCIÓN ───────────────────────────────────────────
 
+
+# ── ENDPOINTS GENÉRICOS POR COLECCIÓN ────────────────────────────────────────
+# _match_filter: busca por id, _id de Mongo, materialId o finishedGood
+# Así funciona para TODOS los tipos de documentos (FG, BOM, etc.)
+
 def _match_filter(item_id: str):
-    """Busca un documento por 'id', 'materialId' o _id de Mongo."""
-    or_conditions = [{"id": item_id}, {"materialId": item_id}]
+    """
+    Busca un documento por cualquiera de sus posibles identificadores:
+      - campo 'id' (string que asignamos nosotros)
+      - campo '_id' de MongoDB (ObjectId)
+      - campo 'materialId' (materiales BOM)
+      - campo 'finishedGood' (finished goods)
+    """
+    or_conditions = [
+        {"id":           item_id},
+        {"materialId":   item_id},
+        {"finishedGood": item_id},
+    ]
     try:
         or_conditions.append({"_id": ObjectId(item_id)})
     except Exception:
@@ -386,7 +401,21 @@ def _match_filter(item_id: str):
     return {"$or": or_conditions}
 
 
+def _get_doc_key(doc: dict) -> str:
+    """
+    Devuelve la clave de deduplicación de un documento.
+    Prioridad: id > materialId > finishedGood > _id
+    """
+    return (
+        doc.get("id") or
+        doc.get("materialId") or
+        doc.get("finishedGood") or
+        str(doc.get("_id", ""))
+    ).strip().lower()
+
+
 def generic_router(col, prefix: str):
+
     @app.get(f"/api/{prefix}")
     def _list(u=Depends(get_current_user)):
         return col_list(col)
@@ -413,29 +442,53 @@ def generic_router(col, prefix: str):
             col.insert_one(body)
         return {"ok": True}
 
+    # IMPORTANTE: cleanup/duplicates debe ir ANTES que {item_id}
+    # para que FastAPI no interprete "cleanup" como un item_id
     @app.delete(f"/api/{prefix}/cleanup/duplicates")
     def _cleanup_duplicates(u=Depends(require_editor)):
         """
-        Elimina documentos duplicados según 'materialId' (o 'id' si no
-        existe materialId), dejando el primero de cada grupo.
+        Elimina duplicados de la colección.
+        Usa _get_doc_key() que funciona para BOM (materialId),
+        Finished Goods (finishedGood), y cualquier otro tipo (id).
+        Conserva el PRIMER registro de cada clave y borra el resto.
         """
-        seen = set()
-        to_delete = []
+        seen       = {}   # key → _id del primero visto
+        to_delete  = []
+
         for doc in col.find():
-            key = (doc.get("materialId") or doc.get("id") or "").strip().lower()
+            key = _get_doc_key(doc)
             if not key:
                 continue
-            if key in seen:
-                to_delete.append(doc["_id"])
+            if key not in seen:
+                seen[key] = doc["_id"]
             else:
-                seen.add(key)
+                to_delete.append(doc["_id"])
+
+        deleted = 0
         for _id in to_delete:
             col.delete_one({"_id": _id})
-        return {"ok": True, "deleted_count": len(to_delete), "remaining": col.count_documents({})}
+            deleted += 1
+
+        return {
+            "ok":            True,
+            "deleted_count": deleted,
+            "remaining":     col.count_documents({}),
+        }
 
     @app.delete(f"/api/{prefix}/{{item_id}}")
     def _delete(item_id: str, u=Depends(require_editor)):
+        """
+        Elimina un documento buscándolo por id, materialId,
+        finishedGood o _id de Mongo.
+        """
         result = col.delete_one(_match_filter(item_id))
+        if result.deleted_count == 0:
+            # Intentar una segunda vez por _id de Mongo directamente
+            try:
+                result2 = col.delete_one({"_id": ObjectId(item_id)})
+                return {"ok": True, "deleted_count": result2.deleted_count}
+            except Exception:
+                pass
         return {"ok": True, "deleted_count": result.deleted_count}
 
 
