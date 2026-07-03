@@ -377,18 +377,17 @@ async def sync_upload(request: Request, u=Depends(require_editor)):
 # ── ENDPOINTS GENÉRICOS POR COLECCIÓN ───────────────────────────────────────────
 
 
-# ── ENDPOINTS GENÉRICOS POR COLECCIÓN ────────────────────────────────────────
-# _match_filter: busca por id, _id de Mongo, materialId o finishedGood
-# Así funciona para TODOS los tipos de documentos (FG, BOM, etc.)
+# ── ENDPOINTS GENÉRICOS POR COLECCIÓN ─────────────────────────────────────────
 
 def _match_filter(item_id: str):
     """
-    Busca un documento por cualquiera de sus posibles identificadores:
-      - campo 'id' (string que asignamos nosotros)
-      - campo '_id' de MongoDB (ObjectId)
-      - campo 'materialId' (materiales BOM)
-      - campo 'finishedGood' (finished goods)
+    Busca un documento por id, materialId, finishedGood o _id de Mongo.
+    NUNCA acepta item_id vacío para evitar borrar documentos al azar.
     """
+    if not item_id or not item_id.strip():
+        # Filtro imposible — no borrará nada
+        return {"_never_match_": True}
+
     or_conditions = [
         {"id":           item_id},
         {"materialId":   item_id},
@@ -403,15 +402,16 @@ def _match_filter(item_id: str):
 
 def _get_doc_key(doc: dict) -> str:
     """
-    Devuelve la clave de deduplicación de un documento.
-    Prioridad: id > materialId > finishedGood > _id
+    Clave de deduplicación de un documento.
+    Prioridad: id > materialId > finishedGood > _id de Mongo.
+    SOLO devuelve clave si tiene contenido real (no vacío).
     """
-    return (
-        doc.get("id") or
-        doc.get("materialId") or
-        doc.get("finishedGood") or
-        str(doc.get("_id", ""))
-    ).strip().lower()
+    for field in ("id", "materialId", "finishedGood"):
+        val = str(doc.get(field, "") or "").strip()
+        if val:
+            return val.lower()
+    # Último recurso: _id de Mongo (siempre existe y es único)
+    return str(doc.get("_id", "")).strip().lower()
 
 
 def generic_router(col, prefix: str):
@@ -432,6 +432,8 @@ def generic_router(col, prefix: str):
 
     @app.put(f"/api/{prefix}/{{item_id}}")
     async def _update(item_id: str, request: Request, u=Depends(require_editor)):
+        if not item_id or not item_id.strip():
+            raise HTTPException(400, "ID inválido")
         body = await request.json()
         body.pop("_id", None)
         existing = col.find_one(_match_filter(item_id))
@@ -442,22 +444,25 @@ def generic_router(col, prefix: str):
             col.insert_one(body)
         return {"ok": True}
 
-    # IMPORTANTE: cleanup/duplicates debe ir ANTES que {item_id}
-    # para que FastAPI no interprete "cleanup" como un item_id
+    # IMPORTANTE: cleanup/duplicates DEBE ir antes que {item_id}
     @app.delete(f"/api/{prefix}/cleanup/duplicates")
     def _cleanup_duplicates(u=Depends(require_editor)):
         """
-        Elimina duplicados de la colección.
-        Usa _get_doc_key() que funciona para BOM (materialId),
-        Finished Goods (finishedGood), y cualquier otro tipo (id).
-        Conserva el PRIMER registro de cada clave y borra el resto.
+        Elimina duplicados de la colección de forma SEGURA:
+        - Usa _get_doc_key() que siempre devuelve clave real (nunca vacío)
+        - Como último recurso usa _id de Mongo (único por definición)
+        - Nunca borrará documentos cuya clave sea vacía
+        - Nunca dejará la colección vacía si había datos únicos
         """
-        seen       = {}   # key → _id del primero visto
-        to_delete  = []
+        seen      = {}   # key → _id del primero visto
+        to_delete = []
 
         for doc in col.find():
             key = _get_doc_key(doc)
-            if not key:
+            # Si la clave es el _id de Mongo, es único por definición → nunca es duplicado
+            _id_str = str(doc.get("_id", ""))
+            if key == _id_str.lower():
+                # Documento sin campos de identificación propios → lo dejamos siempre
                 continue
             if key not in seen:
                 seen[key] = doc["_id"]
@@ -478,17 +483,15 @@ def generic_router(col, prefix: str):
     @app.delete(f"/api/{prefix}/{{item_id}}")
     def _delete(item_id: str, u=Depends(require_editor)):
         """
-        Elimina un documento buscándolo por id, materialId,
-        finishedGood o _id de Mongo.
+        Elimina un documento de forma segura.
+        - Rechaza IDs vacíos
+        - Busca por id, materialId, finishedGood o _id de Mongo
         """
-        result = col.delete_one(_match_filter(item_id))
-        if result.deleted_count == 0:
-            # Intentar una segunda vez por _id de Mongo directamente
-            try:
-                result2 = col.delete_one({"_id": ObjectId(item_id)})
-                return {"ok": True, "deleted_count": result2.deleted_count}
-            except Exception:
-                pass
+        if not item_id or not item_id.strip():
+            raise HTTPException(400, "ID inválido — no se puede eliminar con ID vacío")
+
+        flt    = _match_filter(item_id)
+        result = col.delete_one(flt)
         return {"ok": True, "deleted_count": result.deleted_count}
 
 
